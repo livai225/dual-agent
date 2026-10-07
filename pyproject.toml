@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dual-agent"
+dynamic = ["version"]
+description = "Claude Code + Codex CLI comme une équipe : tests d'acceptation écrits d'avance, routage mesuré par domaine, mémoire partagée."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["claude-code", "codex", "ai-agents", "multi-agent", "cli", "git-worktree", "code-review", "developer-tools"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development",
+]
+dependencies = []
+
+[project.scripts]
+dual-agent = "dual_agent:main"
+
+[tool.setuptools]
+py-modules = ["dual_agent"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dual_agent.APP_VERSION"}
