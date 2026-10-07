@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 APP_NAME = "Dual Agent"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 
 HOME_DIR = Path(os.environ.get("DUAL_AGENT_HOME") or (Path.home() / ".dual-agent"))
 RUNS_DIR = HOME_DIR / "runs"
@@ -493,9 +493,14 @@ class CodexAgent(Agent):
                 "--sandbox", "workspace-write" if write else "read-only",
                 "-C", str(cwd), "-o", str(last_msg), "-"]
 
+    diag_access = "read-only"   # "full" : sans bac à sable (voir `ask --codex-access full`)
+
     def diag_command(self, cwd, last_msg):
-        # Bac à sable « read-only » de Codex : lecture et commandes sans écriture, réseau coupé.
-        return [self.path(), "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+        # Par défaut : bac à sable « read-only » de Codex (lecture et commandes sans écriture, réseau coupé).
+        # Il peut empêcher certaines commandes de diagnostic (ps, ss, df…) : `--codex-access full` les débloque,
+        # mais la lecture seule ne repose alors plus que sur les consignes données à l'agent.
+        sandbox = "danger-full-access" if self.diag_access == "full" else "read-only"
+        return [self.path(), "exec", "--skip-git-repo-check", "--sandbox", sandbox,
                 "-C", str(cwd), "-o", str(last_msg), "-"]
 
     def read_output(self, log, last_msg):
@@ -2558,6 +2563,10 @@ def cmd_ask(args) -> int:
     cwd = Path(args.dir).expanduser().resolve()
     if not cwd.is_dir():
         raise DualError(f"Dossier introuvable : {cwd}")
+    access = getattr(args, "codex_access", None) or os.environ.get("DUAL_AGENT_CODEX_ACCESS") or "read-only"
+    if access not in ("read-only", "full"):
+        raise DualError("--codex-access doit valoir read-only ou full.")
+    CODEX.diag_access = access
     keys = ["claude", "codex"] if args.agent == "both" else [args.agent]
     missing = [k for k in keys if not AGENTS[k].installed()]
     if missing and args.agent != "both":
@@ -2596,7 +2605,12 @@ def cmd_ask(args) -> int:
         say(f"Dossier : {cwd}")
         say(f"Agents  : {' + '.join(AGENTS[k].label for k in keys)}"
             + ("" if len(keys) == 1 else " (en parallèle, puis synthèse)"))
-        say(c("Rien ne sera modifié : écriture bloquée, commandes de diagnostic uniquement.", DIM))
+        if "codex" in keys and access == "full":
+            warn("Codex tourne SANS bac à sable (--codex-access full) : la lecture seule ne repose que sur ses consignes.")
+            say(c("  Claude reste bloqué en lecture seule par ses outils. Évite ce mode sur un serveur dont les journaux", DIM))
+            say(c("  contiennent du texte venu de l'extérieur (requêtes web, messages d'utilisateurs).", DIM))
+        else:
+            say(c("Rien ne sera modifié : écriture bloquée, commandes de diagnostic uniquement.", DIM))
         prompt = diag_prompt(question, cwd)
         steps = parallel([(lambda k=k: one(k, f"{k}-analyse", prompt)) for k in keys])
         good_steps = {k: st.out for k, st in zip(keys, steps) if st.ok}
@@ -2652,6 +2666,9 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--synthesizer", choices=["claude", "codex"], default="claude",
                     help="Agent qui fait la synthèse des deux rapports (défaut : claude).")
     pa.add_argument("--timeout", type=int, default=20, help="Minutes max par appel d'agent (défaut 20).")
+    pa.add_argument("--codex-access", choices=["read-only", "full"], default=None,
+                    help="read-only (défaut) : bac à sable de Codex ; full : sans bac à sable, si celui-ci bloque ps/df/ss… "
+                         "(variable DUAL_AGENT_CODEX_ACCESS pour le fixer une fois).")
 
     pr = sub.add_parser("run", help="Lancer une mission.")
     pr.add_argument("task", help="La mission à confier aux deux agents.")

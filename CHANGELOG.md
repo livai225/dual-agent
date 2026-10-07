@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.4.2
+- `ask --codex-access full` : lance Codex sans bac à sable lorsque celui-ci bloque des commandes de diagnostic (`ps`, `df`, `ss`…). Opt-in explicite et annoncé ; par défaut, Codex reste en `read-only`. Variable `DUAL_AGENT_CODEX_ACCESS` pour le fixer une fois.
+
 ## 1.4.1
 - `ask` : les avertissements de la CLI Claude (stderr) ne polluent plus la réponse ; consigne anti-remarques hors sujet ; rendu terminal soigné (titres, gras, code, puces) ; titres traduits dans la langue de la question.
 - `dual-agent "question"` lancé **hors dépôt Git** devient automatiquement une analyse en lecture seule (au lieu d'une erreur).

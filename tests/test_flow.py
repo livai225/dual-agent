@@ -181,6 +181,13 @@ class FlowTest(unittest.TestCase):
         self.assertIn("lecture seule", r.stdout)
         self.assertIn(("claude", "synth", "-"), self.calls())
 
+    def test_ask_codex_access_full_is_announced(self):
+        r, _ = self.ask("analyse", "--codex-access", "full")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("SANS bac à sable", r.stdout)
+        r2, _ = self.ask("analyse")
+        self.assertNotIn("SANS bac à sable", r2.stdout)
+
     def test_ask_all_agents_failing_is_an_error(self):
         r, _ = self.ask("analyse", FAKE_DIAG_FAIL="claude,codex")
         self.assertEqual(r.returncode, 2)

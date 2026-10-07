@@ -205,6 +205,8 @@ Lecture seule, par construction :
 - **Claude** : outils d'écriture bloqués, seules des commandes de diagnostic sont autorisées (`ps`, `top -b`, `free`, `df`, `du`, `ss`, `journalctl`, `systemctl status`, `docker ps|logs|stats`, `cat`, `grep`, `tail`…). Pas de `sudo`, `rm`, `curl`, `find`, `sed`, `awk`…
 - **Codex** : sandbox `read-only`, réseau coupé.
 
+Si le sandbox de Codex bloque des commandes de diagnostic (`ps`, `df`, `ss`…), son rapport sera pauvre. Option : `--codex-access full` (ou `export DUAL_AGENT_CODEX_ACCESS=full`) lance Codex **sans sandbox** ; la lecture seule ne repose alors que sur ses consignes. À réserver à un serveur dont les journaux ne contiennent pas de texte venu de l'extérieur : une instruction cachée dans un journal pourrait sinon l'amener à agir. Claude reste bloqué par ses outils dans tous les cas.
+
 > Ce n'est pas un bac à sable : les agents peuvent **lire** ce que ton utilisateur peut lire (journaux, configurations, parfois des secrets). Les consignes leur interdisent d'ouvrir clés et jetons, mais lance l'outil avec un utilisateur aux droits limités, et relis les rapports avant de les partager. Un agent dans la sandbox `read-only` de Codex peut ne pas pouvoir interroger certains services (ex. le socket Docker).
 
 ### Réécriture de la demande
@@ -284,7 +286,7 @@ dual-agent "..." -y                   # aucune confirmation (voir « Sécurité 
 | `setup [--relogin]` | Installer et connecter Claude + Codex |
 | `status` | État des deux agents |
 | `doctor` | Diagnostic complet (versions, options, connexions) |
-| `ask "question"` | Analyse en lecture seule, sans dépôt Git (`--agent`, `--dir`, `--synthesizer`, `--timeout`) |
+| `ask "question"` | Analyse en lecture seule, sans dépôt Git (`--agent`, `--dir`, `--synthesizer`, `--codex-access`, `--timeout`) |
 | `run "mission"` | Lancer une mission |
 | `refine "demande"` | Réécrire une demande sans lancer d'agent de code |
 | `team [show\|set\|reset]` | Voir ou régler « qui fait quoi » |

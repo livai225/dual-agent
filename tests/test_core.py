@@ -285,6 +285,14 @@ class DiagReadOnlyTest(unittest.TestCase):
         cmd = a.diag_command(Path("."), Path("x"))
         self.assertEqual(cmd[cmd.index("--sandbox") + 1], "read-only")
 
+    def test_codex_full_access_is_explicit_opt_in(self):
+        a = d.CodexAgent()
+        a.path = lambda: "codex"
+        self.assertEqual(a.diag_access, "read-only")        # jamais « full » par défaut
+        a.diag_access = "full"
+        cmd = a.diag_command(Path("."), Path("x"))
+        self.assertEqual(cmd[cmd.index("--sandbox") + 1], "danger-full-access")
+
 
 if __name__ == "__main__":
     unittest.main()
