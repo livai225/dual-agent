@@ -2,7 +2,7 @@
 
 Le nom de l'agent vient de FAKE_NAME ; le journal des appels est écrit dans $FAKE_LOG/calls.log.
 Variables de scénario : FAKE_PLAN (single | single_backend), FAKE_BAD_PLAN, FAKE_FIX, FAKE_NOWRITE (noms séparés
-par des virgules), FAKE_IMPL_JUNK, FAKE_IMPL_TAMPER, FAKE_SPEC_NONE, FAKE_SPEC_GREEN, FAKE_SPEC_PROD, FAKE_SPEC_CMD, FAKE_DIAG_FAIL.
+par des virgules), FAKE_IMPL_JUNK, FAKE_IMPL_TAMPER, FAKE_SPEC_NONE, FAKE_SPEC_GREEN, FAKE_SPEC_PROD, FAKE_SPEC_CMD, FAKE_DIAG_FAIL, FAKE_STDERR_NOISE.
 """
 import json, os, re, sys, time
 
@@ -33,6 +33,9 @@ kind = ("diag" if "READ-ONLY DIAGNOSTIC" in prompt else
         "impl" if write else "other")
 with open(os.path.join(log_dir, "calls.log"), "a") as f:
     f.write(f"{name}\t{kind}\t{st}\tmemory={'<project_memory>' in prompt}\tacc={'ACCEPTANCE TESTS (written' in prompt}\n")
+
+if os.environ.get("FAKE_STDERR_NOISE"):
+    sys.stderr.write("Permission allow rule (settings.local.json) has a wildcard before the rest of the command\n")
 
 def reply(text):
     print(text)

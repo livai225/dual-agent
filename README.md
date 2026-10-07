@@ -197,6 +197,8 @@ dual-agent ask "analyse les logs nginx des dernières heures" --dir /var/log/ngi
 dual-agent ask "ce service redémarre en boucle, pourquoi ?" --agent claude    # un seul agent (1 appel)
 ```
 
+Hors d'un dépôt Git, `dual-agent "analyse le serveur"` (avec les guillemets) fait la même chose : une demande qui n'est pas dans un projet Git devient une analyse en lecture seule.
+
 Claude et Codex enquêtent chacun de leur côté (charge, mémoire, disque, réseau, logs…), puis une synthèse indique ce sur quoi ils s'accordent, où ils divergent, les causes probables avec un niveau de confiance, et les **actions recommandées — jamais exécutées**. Les rapports sont dans `~/.dual-agent/ask/<session>/` (`SYNTHESE.md`).
 
 Lecture seule, par construction :

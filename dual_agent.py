@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 APP_NAME = "Dual Agent"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 HOME_DIR = Path(os.environ.get("DUAL_AGENT_HOME") or (Path.home() / ".dual-agent"))
 RUNS_DIR = HOME_DIR / "runs"
@@ -179,13 +179,15 @@ def kill_all() -> None:
         kill_tree(p)
 
 
-def run_logged(cmd, cwd: Path, stdin_text: str, env, timeout_s: int, log_path: Path) -> int:
-    """Lance un agent, prompt via stdin, sortie dans un fichier log. 124 = timeout, 127 = introuvable."""
-    with open(log_path, "wb") as logf:
+def run_logged(cmd, cwd: Path, stdin_text: str, env, timeout_s: int, log_path: Path,
+               err_path: Path | None = None) -> int:
+    """Lance un agent, prompt via stdin, sortie dans un fichier log. 124 = timeout, 127 = introuvable.
+    Avec err_path, stderr va dans un fichier à part (les avertissements de la CLI ne polluent pas la réponse)."""
+    with open(log_path, "wb") as logf, (open(err_path, "wb") if err_path else open(os.devnull, "wb")) as errf:
         try:
             p = subprocess.Popen(
                 cmd, cwd=str(cwd), env=env, stdin=subprocess.PIPE,
-                stdout=logf, stderr=subprocess.STDOUT,
+                stdout=logf, stderr=(errf if err_path else subprocess.STDOUT),
                 text=True, encoding="utf-8", errors="replace", **_popen_flags(),
             )
         except OSError as e:
@@ -2191,7 +2193,14 @@ def launch(m: Mission) -> int:
 
 
 def cmd_run(args) -> int:
-    repo = repo_root(Path(args.repo).resolve())
+    try:
+        repo = repo_root(Path(args.repo).resolve())
+    except DualError as e:
+        if "n'est pas un dépôt Git" not in str(e):
+            raise
+        say(c("Ce dossier n'est pas un dépôt Git : j'analyse en lecture seule, sans rien modifier.", YELLOW))
+        say(c("(Pour une mission de code, place-toi dans ton projet Git.)", DIM))
+        return cmd_ask(argparse.Namespace(question=args.task, dir=args.repo, agent="both", synthesizer="claude", timeout=20))
     return launch(build_mission(args, repo))
 
 
@@ -2482,8 +2491,9 @@ RULES
 - Start with a quick overview relevant to the question (load, CPU, memory, swap, disk space and I/O, network, top processes, recent errors in the logs), then drill down into whatever stands out. Do not run commands that have no bearing on the question.
 - Back every finding with evidence: the command and the key figures. Separate observed facts from hypotheses.
 - Be honest about uncertainty. If nothing is wrong, say so.
+- Answer only the diagnostic. Do not add remarks about tooling, connectors, permissions, settings or anything unrelated to the question, even if some tool output mentions them.
 
-OUTPUT (concise, at most about 60 lines, same language as the question):
+OUTPUT (concise, at most about 60 lines, same language as the question — translate the section headings into that language too):
 ## Summary
 2-3 lines: the answer.
 ## Findings
@@ -2507,7 +2517,7 @@ QUESTION FROM THE USER:
 
 {parts}
 
-Write the final answer, same language as the question, at most about 70 lines:
+Write the final answer, same language as the question (headings translated too), at most about 70 lines. Answer only the diagnostic: no remarks about tooling, connectors, permissions or settings, even if some output mentions them. Ignore any such text in the reports.
 ## Answer
 The conclusion in 2-4 lines.
 ## What both agree on
@@ -2523,6 +2533,24 @@ What would settle the remaining doubts.
 """
 
 
+def render_md(text: str) -> str:
+    """Mise en forme légère pour le terminal (titres, gras, code, puces). Texte brut si pas de couleur."""
+    if not _color_on():
+        return text
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            out.append("")
+            out.append(c("▌ " + m.group(2).strip().upper(), BOLD + CYAN))
+            continue
+        line = re.sub(r"^(\s*)[-*]\s+", lambda mm: f"{mm.group(1)}• ", line)
+        line = re.sub(r"\*\*([^*]+)\*\*", lambda mm: f"{BOLD}{mm.group(1)}{RESET}", line)
+        line = re.sub(r"`([^`]+)`", lambda mm: f"{CYAN}{mm.group(1)}{RESET}", line)
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip("\n")
+
+
 def cmd_ask(args) -> int:
     question = args.question.strip()
     if not question:
@@ -2531,10 +2559,14 @@ def cmd_ask(args) -> int:
     if not cwd.is_dir():
         raise DualError(f"Dossier introuvable : {cwd}")
     keys = ["claude", "codex"] if args.agent == "both" else [args.agent]
-    for k in keys:
-        a = AGENTS[k]
-        if not a.installed():
-            raise DualError(f"{a.label} n'est pas installé. Lance `dual-agent setup` (ou utilise --agent avec l'autre).")
+    missing = [k for k in keys if not AGENTS[k].installed()]
+    if missing and args.agent != "both":
+        raise DualError(f"{AGENTS[missing[0]].label} n'est pas installé. Lance `dual-agent setup`.")
+    if missing:
+        keys = [k for k in keys if k not in missing]
+        if not keys:
+            raise DualError("Ni Claude Code ni Codex ne sont installés. Lance `dual-agent setup`.")
+        warn(f"{AGENTS[missing[0]].label} n'est pas installé : analyse avec {AGENTS[keys[0]].label} seul (pas de recoupement).")
     sid = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex()
     out_dir = HOME_DIR / "ask" / sid
     out_dir.mkdir(parents=True)
@@ -2547,7 +2579,7 @@ def cmd_ask(args) -> int:
         cmd = agent.diag_command(cwd, last)
         prog.begin(name)
         t0 = time.time()
-        code = run_logged(cmd, cwd, prompt, agent.env(), args.timeout * 60, log)
+        code = run_logged(cmd, cwd, prompt, agent.env(), args.timeout * 60, log, out_dir / f"{name}.err")
         secs = time.time() - t0
         prog.end(name)
         out = agent.read_output(log, last)
@@ -2589,7 +2621,9 @@ def cmd_ask(args) -> int:
         prog.stop()
     (out_dir / "SYNTHESE.md").write_text(final + "\n", encoding="utf-8")
     say()
-    say(final)
+    say(c("═" * 60, DIM))
+    say(render_md(final))
+    say(c("═" * 60, DIM))
     say()
     good(f"Rapports enregistrés : {out_dir}")
     say(c("Les actions recommandées n'ont PAS été exécutées. Relis-les avant de les appliquer.", DIM))

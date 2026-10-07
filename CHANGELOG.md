@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+- `ask` : les avertissements de la CLI Claude (stderr) ne polluent plus la réponse ; consigne anti-remarques hors sujet ; rendu terminal soigné (titres, gras, code, puces) ; titres traduits dans la langue de la question.
+- `dual-agent "question"` lancé **hors dépôt Git** devient automatiquement une analyse en lecture seule (au lieu d'une erreur).
+- `ask` fonctionne avec un seul agent si l'autre n'est pas installé.
+
 ## 1.4.0
 - **`dual-agent ask "..."`** : analyse en lecture seule, **sans dépôt Git** (ex. « pourquoi le serveur est lent ? »). Les deux agents enquêtent en parallèle, puis une synthèse recoupe les deux rapports (accords, désaccords, causes probables, actions recommandées non exécutées). `--agent claude|codex` pour un seul agent, `--dir` pour choisir le dossier.
 - Lecture seule garantie par les outils : Claude sans Edit/Write et avec une liste blanche de commandes de diagnostic ; Codex en sandbox `read-only`.

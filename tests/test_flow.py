@@ -164,6 +164,23 @@ class FlowTest(unittest.TestCase):
         self.assertIn("Un seul rapport", r.stdout)
         self.assertEqual([c for c in self.calls() if c[1] == "synth"], [])
 
+    def test_ask_cli_warnings_on_stderr_do_not_pollute_the_answer(self):
+        r, _ = self.ask("analyse", FAKE_STDERR_NOISE="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("Permission allow rule", r.stdout)
+        self.assertNotIn("Permission allow rule", "".join(p.read_text() for p in self.home.glob("ask/*/*.md")))
+
+    def test_plain_request_outside_git_becomes_a_read_only_analysis(self):
+        plain = self.tmp / "plain2"
+        plain.mkdir()
+        e = dict(os.environ, PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}", DUAL_AGENT_HOME=str(self.home),
+                 FAKE_LOG=str(self.log), NO_COLOR="1")
+        r = subprocess.run([sys.executable, str(DUAL), "analyse le serveur"], cwd=plain, env=e,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("lecture seule", r.stdout)
+        self.assertIn(("claude", "synth", "-"), self.calls())
+
     def test_ask_all_agents_failing_is_an_error(self):
         r, _ = self.ask("analyse", FAKE_DIAG_FAIL="claude,codex")
         self.assertEqual(r.returncode, 2)

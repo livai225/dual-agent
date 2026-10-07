@@ -231,6 +231,29 @@ class GitHelpers(unittest.TestCase):
         self.assertNotIn("pycache", files)
 
 
+class RenderTest(unittest.TestCase):
+    def test_plain_text_when_no_color(self):
+        old = d._color_on
+        d._color_on = lambda: False
+        try:
+            self.assertEqual(d.render_md("## Titre\n- **a** `b`"), "## Titre\n- **a** `b`")
+        finally:
+            d._color_on = old
+
+    def test_formatting_when_color(self):
+        old = d._color_on
+        d._color_on = lambda: True
+        try:
+            out = d.render_md("## Réponse\n- **gras** et `code`")
+        finally:
+            d._color_on = old
+        self.assertIn("RÉPONSE", out)
+        self.assertIn("• ", out)
+        self.assertNotIn("**", out)
+        self.assertNotIn("`", out)
+        self.assertNotIn("##", out)
+
+
 class DiagReadOnlyTest(unittest.TestCase):
     """Le mode `ask` ne doit jamais ouvrir de droit d'écriture ou d'exécution arbitraire."""
 
