@@ -2,7 +2,7 @@
 
 Le nom de l'agent vient de FAKE_NAME ; le journal des appels est écrit dans $FAKE_LOG/calls.log.
 Variables de scénario : FAKE_PLAN (single | single_backend), FAKE_BAD_PLAN, FAKE_FIX, FAKE_NOWRITE (noms séparés
-par des virgules), FAKE_IMPL_JUNK, FAKE_IMPL_TAMPER, FAKE_SPEC_NONE, FAKE_SPEC_GREEN, FAKE_SPEC_PROD, FAKE_SPEC_CMD.
+par des virgules), FAKE_IMPL_JUNK, FAKE_IMPL_TAMPER, FAKE_SPEC_NONE, FAKE_SPEC_GREEN, FAKE_SPEC_PROD, FAKE_SPEC_CMD, FAKE_DIAG_FAIL.
 """
 import json, os, re, sys, time
 
@@ -22,7 +22,9 @@ log_dir = os.environ.get("FAKE_LOG", "/tmp")
 
 m = re.search(r"SUBTASK — (s\d)|subtask (s\d)", prompt)
 st = next((g for g in m.groups() if g), "-") if m else "-"
-kind = ("refine" if "tech lead preparing a work order" in prompt else
+kind = ("diag" if "READ-ONLY DIAGNOSTIC" in prompt else
+        "synth" if "synthesising two independent" in prompt else
+        "refine" if "tech lead preparing a work order" in prompt else
         "plan" if "splitting a brief into subtasks" in prompt else
         "retro" if "shared project memory that two AI developers" in prompt else
         "spec" if "writing acceptance tests BEFORE implementation" in prompt else
@@ -38,6 +40,12 @@ def reply(text):
         open(last, "w").write(text)
     sys.exit(0)
 
+if kind == "diag":
+    if name in os.environ.get("FAKE_DIAG_FAIL", "").split(","):
+        print("boom"); sys.exit(1)
+    reply(f"## Summary\n{name}: le disque est saturé par les logs (rapport simulé pour les tests).\n## Findings\n- df: 98%")
+if kind == "synth":
+    reply("## Answer\nSynthèse simulée : disque saturé.\n## What both agree on\n- df 98%\n" + ("both" if "REPORT FROM CLAUDE" in prompt and "REPORT FROM CODEX" in prompt else "one"))
 if kind == "refine":
     reply("<brief>\n## Demande d'origine\nX\n## Objectif\n" + "Brief precis genere avec contexte verifie et criteres. " * 3 + "\n</brief>")
 if kind == "plan":

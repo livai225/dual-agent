@@ -131,6 +131,43 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("ui_ux", r.stdout)
 
+    # -- mode `ask` : analyse en lecture seule, hors dépôt Git ---------------------------------
+    def ask(self, *args, **env):
+        plain = self.tmp / "plain"                      # dossier qui n'est PAS un dépôt Git
+        plain.mkdir(exist_ok=True)
+        e = dict(os.environ, PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}", DUAL_AGENT_HOME=str(self.home),
+                 FAKE_LOG=str(self.log), NO_COLOR="1", **env)
+        return subprocess.run([sys.executable, str(DUAL), "ask", *args], cwd=plain, env=e,
+                              capture_output=True, text=True, timeout=120), plain
+
+    def test_ask_two_agents_then_synthesis_without_git(self):
+        r, plain = self.ask("pourquoi le serveur est lent ?")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = self.calls()
+        self.assertIn(("claude", "diag", "-"), calls)
+        self.assertIn(("codex", "diag", "-"), calls)
+        self.assertIn(("claude", "synth", "-"), calls)
+        self.assertIn("Synthèse simulée", r.stdout)
+        self.assertIn("both", r.stdout)                  # la synthèse a reçu les deux rapports
+        self.assertTrue(list(self.home.glob("ask/*/SYNTHESE.md")))
+        self.assertEqual(list(plain.iterdir()), [])      # rien n'est écrit dans le dossier analysé
+
+    def test_ask_single_agent_has_no_synthesis(self):
+        r, _ = self.ask("analyse", "--agent", "codex")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual([c for c in self.calls() if c[1] == "synth"], [])
+        self.assertEqual([c[0] for c in self.calls() if c[1] == "diag"], ["codex"])
+
+    def test_ask_survives_one_failing_agent(self):
+        r, _ = self.ask("analyse", FAKE_DIAG_FAIL="codex")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Un seul rapport", r.stdout)
+        self.assertEqual([c for c in self.calls() if c[1] == "synth"], [])
+
+    def test_ask_all_agents_failing_is_an_error(self):
+        r, _ = self.ask("analyse", FAKE_DIAG_FAIL="claude,codex")
+        self.assertEqual(r.returncode, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

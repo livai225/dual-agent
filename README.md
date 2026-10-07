@@ -62,6 +62,7 @@ Claude Code et Codex ne sont pas bons aux mêmes choses, et aucun des deux ne re
 | 📊 **Routage mesuré** | Chaque sous-tâche alimente un journal de résultats par domaine et par agent. Une fois les données suffisantes, l'agent le plus performant est choisi automatiquement. |
 | 🧠 **Mémoire partagée** | Conventions, décisions et leçons du projet, injectées dans les prompts des deux agents et exportables vers `CLAUDE.md` / `AGENTS.md`. Rien n'est enregistré sans ta confirmation. |
 | 🌿 **Isolation Git** | Tout se passe dans des worktrees dédiés et des branches `dual-agent/<session>/…`. Fusion uniquement quand tu le décides. |
+| 🔎 **Analyse sans dépôt Git** | `dual-agent ask "pourquoi le serveur est lent ?"` : les deux agents enquêtent en **lecture seule**, puis une synthèse recoupe leurs conclusions. Rien n'est modifié. |
 | 🏁 **Mode concours** | `--mode compete` : les deux agents font toute la mission séparément, un intégrateur assemble la meilleure solution. |
 | 🔒 **Garde-fous** | Commandes de test proposées par un agent filtrées par liste blanche et exécutées sans shell ; secrets et fichiers générés exclus des commits. |
 
@@ -187,6 +188,23 @@ Les rapports (`SUMMARY.md`, revues, tests) se trouvent dans `~/.dual-agent/runs/
 
 ## Utilisation en détail
 
+### Analyser un serveur ou un dossier (sans dépôt Git)
+
+```bash
+dual-agent ask "pourquoi le serveur est lent ?"
+dual-agent ask "qu'est-ce qui remplit le disque ?"
+dual-agent ask "analyse les logs nginx des dernières heures" --dir /var/log/nginx
+dual-agent ask "ce service redémarre en boucle, pourquoi ?" --agent claude    # un seul agent (1 appel)
+```
+
+Claude et Codex enquêtent chacun de leur côté (charge, mémoire, disque, réseau, logs…), puis une synthèse indique ce sur quoi ils s'accordent, où ils divergent, les causes probables avec un niveau de confiance, et les **actions recommandées — jamais exécutées**. Les rapports sont dans `~/.dual-agent/ask/<session>/` (`SYNTHESE.md`).
+
+Lecture seule, par construction :
+- **Claude** : outils d'écriture bloqués, seules des commandes de diagnostic sont autorisées (`ps`, `top -b`, `free`, `df`, `du`, `ss`, `journalctl`, `systemctl status`, `docker ps|logs|stats`, `cat`, `grep`, `tail`…). Pas de `sudo`, `rm`, `curl`, `find`, `sed`, `awk`…
+- **Codex** : sandbox `read-only`, réseau coupé.
+
+> Ce n'est pas un bac à sable : les agents peuvent **lire** ce que ton utilisateur peut lire (journaux, configurations, parfois des secrets). Les consignes leur interdisent d'ouvrir clés et jetons, mais lance l'outil avec un utilisateur aux droits limités, et relis les rapports avant de les partager. Un agent dans la sandbox `read-only` de Codex peut ne pas pouvoir interroger certains services (ex. le socket Docker).
+
 ### Réécriture de la demande
 
 Par défaut, ta demande est réécrite en brief précis, puis affichée pour relecture / modification. Pour l'essayer seul, sans lancer d'agent de code :
@@ -264,6 +282,7 @@ dual-agent "..." -y                   # aucune confirmation (voir « Sécurité 
 | `setup [--relogin]` | Installer et connecter Claude + Codex |
 | `status` | État des deux agents |
 | `doctor` | Diagnostic complet (versions, options, connexions) |
+| `ask "question"` | Analyse en lecture seule, sans dépôt Git (`--agent`, `--dir`, `--synthesizer`, `--timeout`) |
 | `run "mission"` | Lancer une mission |
 | `refine "demande"` | Réécrire une demande sans lancer d'agent de code |
 | `team [show\|set\|reset]` | Voir ou régler « qui fait quoi » |
@@ -306,6 +325,7 @@ Variables d'environnement : `DUAL_AGENT_HOME` (dossier de données), `DUAL_AGENT
 ~/.dual-agent/
 ├── runs/<dépôt>/<session>/   worktrees + rapports (reports/SUMMARY.md …)
 ├── memory/                   mémoire partagée, un fichier par projet
+├── ask/<session>/            rapports du mode `ask`
 ├── ledger.jsonl              journal des résultats (routage mesuré)
 ├── team.json                 réglages « qui fait quoi » globaux
 └── team/                     réglages propres à un projet
@@ -334,7 +354,8 @@ Chaque appel d'agent consomme de ton quota / crédit. À titre indicatif, **une 
 
 - ✅ Tests unitaires et tests de flux complets (réécriture, plan, tests d'acceptation, falsification, relais, mémoire, routage, fusion) passent avec de **faux agents simulés**.
 - ✅ La CI exécute les tests unitaires sur Linux, macOS et Windows (Python 3.9 et 3.13) ; les tests de flux tournent sous Linux/macOS uniquement.
-- ⚠️ **Non validé de bout en bout avec les vraies CLI** `claude` et `codex` sur toutes les versions, ni sous Windows. Les options des CLI évoluent : `dual-agent doctor` signale les écarts.
+- ✅ `dual-agent doctor`, `setup` et la connexion ont été vérifiés avec les vraies CLI (Claude Code 2.1.x, codex-cli 0.160.x) sur Ubuntu. Le mode `ask` a été essayé avec le vrai Claude (lecture seule confirmée), pas encore avec Codex.
+- ⚠️ **Missions de code non validées de bout en bout avec les vraies CLI** sur toutes les versions, ni sous Windows. Les options des CLI évoluent : `dual-agent doctor` signale les écarts.
 - ⚠️ La répartition par défaut est une convention ; seul le routage mesuré (après plusieurs missions) repose sur des données.
 
 Les retours de test sur de vrais projets sont très bienvenus (issues).
@@ -345,6 +366,7 @@ Les retours de test sur de vrais projets sont très bienvenus (issues).
 |---|---|
 | `Codex — non installé` ou `non connecté` | `dual-agent setup`, puis `dual-agent doctor` |
 | « modifications non commitées » | Commite ou `git stash`, ou `--allow-dirty` (à tes risques) |
+| `ask` : une commande est « refusée » | Elle n'est pas dans la liste blanche de diagnostic : l'agent la signale dans « Could not verify ». Lance-la toi-même si besoin |
 | Un agent ne produit aucun fichier | L'autre prend le relais ; si aucun n'écrit, la mission s'arrête (code 2) — reformule ou précise la demande |
 | Commande de test « refusée » | Elle n'est pas dans la liste blanche : fournis la tienne avec `--test` |
 | Une option de CLI n'est plus reconnue | `dual-agent doctor`, puis ouvre une issue avec la version de la CLI concernée |

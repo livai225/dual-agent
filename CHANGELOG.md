@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0
+- **`dual-agent ask "..."`** : analyse en lecture seule, **sans dépôt Git** (ex. « pourquoi le serveur est lent ? »). Les deux agents enquêtent en parallèle, puis une synthèse recoupe les deux rapports (accords, désaccords, causes probables, actions recommandées non exécutées). `--agent claude|codex` pour un seul agent, `--dir` pour choisir le dossier.
+- Lecture seule garantie par les outils : Claude sans Edit/Write et avec une liste blanche de commandes de diagnostic ; Codex en sandbox `read-only`.
+- `dual-agent` seul, hors dépôt Git, propose maintenant ce mode d'analyse.
+
 ## 1.3.0
 - **Tests d'acceptation** : pour chaque sous-tâche, l'agent qui n'implémente pas écrit d'abord les tests (fichiers de test uniquement), vérifiés rouges avant l'implémentation ; l'implémenteur ne peut pas les modifier ; tests rouges = correction forcée.
 - **Routage mesuré** : journal des résultats par domaine et par agent, score, décision automatique (≥ 3 mesures par agent, écart ≥ 0,15), `--calibrate`, `--no-learn`, `dual-agent stats`, `dual-agent team set <domaine> auto`.

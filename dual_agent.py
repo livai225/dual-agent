@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 APP_NAME = "Dual Agent"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 HOME_DIR = Path(os.environ.get("DUAL_AGENT_HOME") or (Path.home() / ".dual-agent"))
 RUNS_DIR = HOME_DIR / "runs"
@@ -350,6 +350,19 @@ ANTHROPIC_VARS = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 
 READ_ONLY_GIT = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"]
 
+# Commandes de diagnostic en lecture seule autorisées pour Claude en mode `ask` (préfixes).
+# Volontairement exclus : sudo, find/xargs/awk/sed (exécution ou écriture possibles), curl/wget, env, rm, mv, tee, kill…
+DIAG_BASH = [
+    "uptime", "date", "uname", "hostname", "whoami", "id", "w", "who", "last", "nproc", "lscpu", "lsblk", "lsmod",
+    "free", "df", "du", "vmstat", "iostat", "mpstat", "sar", "ps", "top -b", "pidstat", "lsof", "pgrep",
+    "ss", "netstat", "ip addr", "ip route", "ip link", "ip -s", "ping -c",
+    "cat", "head", "tail", "ls", "stat", "file", "wc", "grep", "sort", "uniq", "cut", "tr", "column", "basename", "dirname",
+    "journalctl", "dmesg", "systemctl status", "systemctl list-units", "systemctl list-timers", "systemctl is-active",
+    "systemctl is-enabled", "systemctl show", "systemctl cat", "crontab -l",
+    "docker ps", "docker stats --no-stream", "docker logs", "docker inspect", "docker top", "docker images", "docker system df",
+    "findmnt", "mount", "swapon --show", "sysctl -a", "getconf", "ulimit",
+]
+
 
 class Agent:
     key = ""
@@ -410,6 +423,10 @@ class Agent:
     def command(self, cwd: Path, write: bool, bash_prefixes: list, last_msg: Path) -> list:
         raise NotImplementedError
 
+    def diag_command(self, cwd: Path, last_msg: Path) -> list:
+        """Analyse en lecture seule (mode `ask`) : lire et lancer des commandes de diagnostic, rien modifier."""
+        raise NotImplementedError
+
     def read_output(self, log: Path, last_msg: Path) -> str:
         try:
             return log.read_text(encoding="utf-8", errors="replace").strip()
@@ -447,6 +464,14 @@ class ClaudeAgent(Agent):
         cmd += ["--allowedTools", ",".join(tools)]
         return cmd
 
+    def diag_command(self, cwd, last_msg):
+        tools = ["Read", "Glob", "Grep"] + [f"Bash({p}:*)" for p in DIAG_BASH]
+        cmd = [self.path(), "-p"]
+        if os.name != "nt":
+            cmd += ["--add-dir", "/"]   # sans cela, la lecture hors du dossier courant (/proc, /var/log…) est refusée
+        cmd += ["--disallowedTools", "Edit,Write,NotebookEdit", "--allowedTools", ",".join(tools)]
+        return cmd
+
 
 class CodexAgent(Agent):
     key, label, exe = "codex", "Codex", "codex"
@@ -464,6 +489,11 @@ class CodexAgent(Agent):
     def command(self, cwd, write, bash_prefixes, last_msg):
         return [self.path(), "exec", "--skip-git-repo-check",
                 "--sandbox", "workspace-write" if write else "read-only",
+                "-C", str(cwd), "-o", str(last_msg), "-"]
+
+    def diag_command(self, cwd, last_msg):
+        # Bac à sable « read-only » de Codex : lecture et commandes sans écriture, réseau coupé.
+        return [self.path(), "exec", "--skip-git-repo-check", "--sandbox", "read-only",
                 "-C", str(cwd), "-o", str(last_msg), "-"]
 
     def read_output(self, log, last_msg):
@@ -2174,7 +2204,18 @@ def cmd_interactive(_args=None) -> int:
                 return code
         else:
             return 2
-    repo = repo_root(Path.cwd())
+    try:
+        repo = repo_root(Path.cwd())
+    except DualError as e:
+        if "Git n'est pas installé" in str(e):
+            raise
+        say(c("\nCe dossier n'est pas un dépôt Git : les missions de code sont indisponibles ici.", YELLOW))
+        if not ask_yes_no("Poser une question d'analyse à lecture seule (serveur, dossier…) ?"):
+            return 2
+        q = ask("Question > ")
+        if not q:
+            return 0
+        return cmd_ask(argparse.Namespace(question=q, dir=".", agent="both", synthesizer="claude", timeout=20))
     say(f"\nProjet : {repo}")
     task = ask("Mission > ")
     if not task:
@@ -2423,7 +2464,136 @@ def cmd_stats(args) -> int:
     return 0
 
 
-COMMANDS = {"setup", "status", "doctor", "run", "refine", "team", "memory", "stats", "merge", "clean", "list"}
+COMMANDS = {"setup", "status", "doctor", "run", "refine", "ask", "team", "memory", "stats", "merge", "clean", "list"}
+
+
+# ───────────────────────── Mode `ask` : analyse en lecture seule, sans dépôt Git ─────────────────────────
+def diag_prompt(question: str, cwd: Path) -> str:
+    return f"""You are a senior systems engineer doing a READ-ONLY DIAGNOSTIC investigation. Nothing may be changed.
+
+QUESTION FROM THE USER:
+{question}
+
+Working directory: {cwd}
+
+RULES
+- Read-only. Never modify, install, restart, delete, kill or reconfigure anything. Never use sudo. If a command is refused, note it under "Could not verify" and move on.
+- Do not open or print credentials: private keys, tokens, .env files, ~/.ssh, ~/.claude, ~/.codex, /etc/shadow. If a secret appears in some output, mask it in your answer.
+- Start with a quick overview relevant to the question (load, CPU, memory, swap, disk space and I/O, network, top processes, recent errors in the logs), then drill down into whatever stands out. Do not run commands that have no bearing on the question.
+- Back every finding with evidence: the command and the key figures. Separate observed facts from hypotheses.
+- Be honest about uncertainty. If nothing is wrong, say so.
+
+OUTPUT (concise, at most about 60 lines, same language as the question):
+## Summary
+2-3 lines: the answer.
+## Findings
+Ranked by impact; each with evidence (command + figures).
+## Likely cause(s)
+Each with a confidence level (high / medium / low).
+## Recommended actions (NOT executed)
+Exact commands or settings, with risk and expected effect.
+## Could not verify
+What you could not check and why.
+"""
+
+
+def synth_prompt(question: str, reports: dict) -> str:
+    parts = "\n\n".join(f"===== REPORT FROM {k.upper()} =====\n{tail(v, 20000)}" for k, v in reports.items())
+    return f"""You are synthesising two independent read-only diagnostic reports (two different AI engineers investigated the same machine).
+You may run read-only commands to settle disagreements or verify a key claim. Never modify anything, never use sudo, never print secrets.
+
+QUESTION FROM THE USER:
+{question}
+
+{parts}
+
+Write the final answer, same language as the question, at most about 70 lines:
+## Answer
+The conclusion in 2-4 lines.
+## What both agree on
+Findings confirmed by both reports (these are the most reliable).
+## Disagreements
+Where they differ, which claim is better supported by the evidence, and why. Write "none" if there are none.
+## Likely cause(s)
+Ranked, each with a confidence level.
+## Recommended actions (NOT executed)
+Ordered by value and safety, with exact commands and risks.
+## To check next
+What would settle the remaining doubts.
+"""
+
+
+def cmd_ask(args) -> int:
+    question = args.question.strip()
+    if not question:
+        raise DualError("Pose ta question entre guillemets : dual-agent ask \"pourquoi le serveur est lent ?\"")
+    cwd = Path(args.dir).expanduser().resolve()
+    if not cwd.is_dir():
+        raise DualError(f"Dossier introuvable : {cwd}")
+    keys = ["claude", "codex"] if args.agent == "both" else [args.agent]
+    for k in keys:
+        a = AGENTS[k]
+        if not a.installed():
+            raise DualError(f"{a.label} n'est pas installé. Lance `dual-agent setup` (ou utilise --agent avec l'autre).")
+    sid = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex()
+    out_dir = HOME_DIR / "ask" / sid
+    out_dir.mkdir(parents=True)
+    prog = Progress()
+    prog.start()
+
+    def one(key: str, name: str, prompt: str) -> Step:
+        agent = AGENTS[key]
+        log, last = out_dir / f"{name}.log", out_dir / f"{name}.last.txt"
+        cmd = agent.diag_command(cwd, last)
+        prog.begin(name)
+        t0 = time.time()
+        code = run_logged(cmd, cwd, prompt, agent.env(), args.timeout * 60, log)
+        secs = time.time() - t0
+        prog.end(name)
+        out = agent.read_output(log, last)
+        ok = code == 0 and len(out) > 40
+        (out_dir / f"{name}.md").write_text(out or "(aucune sortie)", encoding="utf-8")
+        if ok:
+            good(f"{name} terminé ({fmt_dur(secs)})")
+        else:
+            bad(f"{name} en échec (code {code}, {fmt_dur(secs)}) — log : {log}")
+        return Step(name, ok, code, secs, out)
+
+    try:
+        say(c(f"{APP_NAME} — analyse en lecture seule", BOLD + CYAN))
+        say(f"Dossier : {cwd}")
+        say(f"Agents  : {' + '.join(AGENTS[k].label for k in keys)}"
+            + ("" if len(keys) == 1 else " (en parallèle, puis synthèse)"))
+        say(c("Rien ne sera modifié : écriture bloquée, commandes de diagnostic uniquement.", DIM))
+        prompt = diag_prompt(question, cwd)
+        steps = parallel([(lambda k=k: one(k, f"{k}-analyse", prompt)) for k in keys])
+        good_steps = {k: st.out for k, st in zip(keys, steps) if st.ok}
+        if not good_steps:
+            raise DualError(f"Aucun agent n'a produit d'analyse. Détails : {out_dir}")
+        if len(good_steps) == 1:
+            k, text = next(iter(good_steps.items()))
+            if len(keys) > 1:
+                warn(f"Un seul rapport disponible ({AGENTS[k].label}) : pas de recoupement.")
+            final = text
+        else:
+            synth_key = args.synthesizer
+            if not AGENTS[synth_key].installed():
+                synth_key = next(iter(good_steps))
+            st = one(synth_key, f"{synth_key}-synthese", synth_prompt(question, good_steps))
+            if st.ok:
+                final = st.out
+            else:
+                warn("Synthèse impossible : voici les deux rapports bruts.")
+                final = "\n\n".join(f"===== {k.upper()} =====\n{v}" for k, v in good_steps.items())
+    finally:
+        prog.stop()
+    (out_dir / "SYNTHESE.md").write_text(final + "\n", encoding="utf-8")
+    say()
+    say(final)
+    say()
+    good(f"Rapports enregistrés : {out_dir}")
+    say(c("Les actions recommandées n'ont PAS été exécutées. Relis-les avant de les appliquer.", DIM))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2439,6 +2609,15 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--relogin", action="store_true", help="Refaire les deux connexions.")
     sub.add_parser("status", help="État des deux agents.")
     sub.add_parser("doctor", help="Diagnostic complet (versions, options, connexions).")
+
+    pa = sub.add_parser("ask", help="Analyser sans rien modifier (serveur, dossier…) : pas besoin de dépôt Git.")
+    pa.add_argument("question", help='Ex. : "pourquoi le serveur est lent ?"')
+    pa.add_argument("--dir", default=".", help="Dossier de travail des agents (défaut : dossier courant).")
+    pa.add_argument("--agent", choices=["both", "claude", "codex"], default="both",
+                    help="both (défaut) : les deux analysent puis synthèse ; ou un seul agent.")
+    pa.add_argument("--synthesizer", choices=["claude", "codex"], default="claude",
+                    help="Agent qui fait la synthèse des deux rapports (défaut : claude).")
+    pa.add_argument("--timeout", type=int, default=20, help="Minutes max par appel d'agent (défaut 20).")
 
     pr = sub.add_parser("run", help="Lancer une mission.")
     pr.add_argument("task", help="La mission à confier aux deux agents.")
@@ -2513,7 +2692,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     handlers = {"setup": cmd_setup, "status": cmd_status, "doctor": cmd_doctor, "run": cmd_run,
-                "refine": cmd_refine, "team": cmd_team, "memory": cmd_memory, "stats": cmd_stats,
+                "refine": cmd_refine, "ask": cmd_ask, "team": cmd_team, "memory": cmd_memory, "stats": cmd_stats,
                 "merge": cmd_merge, "clean": cmd_clean, "list": cmd_list}
     try:
         if not args.command:

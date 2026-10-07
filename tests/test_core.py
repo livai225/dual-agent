@@ -231,5 +231,37 @@ class GitHelpers(unittest.TestCase):
         self.assertNotIn("pycache", files)
 
 
+class DiagReadOnlyTest(unittest.TestCase):
+    """Le mode `ask` ne doit jamais ouvrir de droit d'écriture ou d'exécution arbitraire."""
+
+    FORBIDDEN = {"sudo", "rm", "mv", "cp", "tee", "kill", "pkill", "chmod", "chown", "find", "xargs", "awk", "sed",
+                 "curl", "wget", "env", "bash", "sh", "python", "python3", "node", "dd", "touch", "mkdir", "ssh", "scp"}
+
+    def test_allowlist_has_no_dangerous_command(self):
+        first = {p.split()[0] for p in d.DIAG_BASH}
+        self.assertFalse(first & self.FORBIDDEN, first & self.FORBIDDEN)
+        for p in d.DIAG_BASH:
+            self.assertNotIn("restart", p)
+            self.assertNotIn("stop", p)
+            self.assertNotIn("exec", p)
+
+    def test_claude_diag_command_blocks_edits(self):
+        a = d.ClaudeAgent()
+        a.path = lambda: "claude"
+        cmd = a.diag_command(Path("."), Path("x"))
+        self.assertIn("--disallowedTools", cmd)
+        self.assertEqual(cmd[cmd.index("--disallowedTools") + 1], "Edit,Write,NotebookEdit")
+        allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
+        self.assertNotIn("Edit", allowed)
+        self.assertNotIn("Write", allowed)
+        self.assertNotIn("acceptEdits", cmd)
+
+    def test_codex_diag_command_is_read_only_sandbox(self):
+        a = d.CodexAgent()
+        a.path = lambda: "codex"
+        cmd = a.diag_command(Path("."), Path("x"))
+        self.assertEqual(cmd[cmd.index("--sandbox") + 1], "read-only")
+
+
 if __name__ == "__main__":
     unittest.main()
